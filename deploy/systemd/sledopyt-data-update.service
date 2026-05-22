@@ -1,0 +1,14 @@
+[Unit]
+Description=Sledopyt data updater (KLADR + GAR)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/root/sledopyt-addresses
+ExecStart=/root/sledopyt-addresses/deploy/scripts/update-kladr-gar-data.sh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+

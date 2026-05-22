@@ -188,28 +188,44 @@ func main() {
 
 func latestGarURL(client *http.Client) (string, error) {
 	req, err := http.NewRequest(http.MethodGet, fiasDownloadInfoURL, nil)
-	if err != nil {
-		return "", err
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode/100 != 2 {
-		return "", fmt.Errorf("download info status: %s", resp.Status)
-	}
-
-	var infos []downloadInfo
-	if err := json.NewDecoder(resp.Body).Decode(&infos); err != nil {
-		return "", err
-	}
-	for _, info := range infos {
-		if strings.TrimSpace(info.GarXMLFullURL) != "" {
-			return info.GarXMLFullURL, nil
+	if err == nil {
+		resp, reqErr := client.Do(req)
+		if reqErr == nil {
+			defer resp.Body.Close()
+			if resp.StatusCode/100 == 2 {
+				var infos []downloadInfo
+				if decErr := json.NewDecoder(resp.Body).Decode(&infos); decErr == nil {
+					for _, info := range infos {
+						if strings.TrimSpace(info.GarXMLFullURL) != "" {
+							return info.GarXMLFullURL, nil
+						}
+					}
+				}
+			}
 		}
 	}
-	return "", errors.New("GAR XML URL not found in FIAS metadata")
+	return fallbackLatestGarURL(client)
+}
+
+func fallbackLatestGarURL(client *http.Client) (string, error) {
+	now := time.Now()
+	for dayShift := 1; dayShift <= 14; dayShift++ {
+		d := now.AddDate(0, 0, -dayShift)
+		candidate := fmt.Sprintf("https://fias-file.nalog.ru/downloads/%04d.%02d.%02d/gar_xml.zip", d.Year(), d.Month(), d.Day())
+		req, err := http.NewRequest(http.MethodHead, candidate, nil)
+		if err != nil {
+			continue
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			continue
+		}
+		resp.Body.Close()
+		if resp.StatusCode/100 == 2 {
+			return candidate, nil
+		}
+	}
+	return "", errors.New("GAR XML URL not found in metadata or date fallback")
 }
 
 func newRemoteZip(client *http.Client, url string) (*remoteZip, error) {

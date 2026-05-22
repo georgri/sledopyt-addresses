@@ -18,7 +18,8 @@ This skill is specific to `sledopyt-addresses` and uses:
 1. Validate local code compiles.
 2. Sync local workspace to VDS and restart service.
 3. Sync local workspace to auth host clone and push to GitHub.
-4. Report deployment status and commit hash.
+4. Refresh deploy data (KLADR + GAR overlay) on VDS when requested.
+5. Report deployment status and commit hash.
 
 ## Commands
 
@@ -37,6 +38,12 @@ rsync -az --delete --exclude '.git/' --exclude 'data/' --exclude '.env' --exclud
 ssh root@88.210.9.155 "cd ~/sledopyt-addresses && /usr/bin/docker-compose down && /usr/bin/docker-compose up --build -d && sleep 45 && /usr/bin/docker-compose logs --tail=50"
 ```
 
+### 2b) Optional: update KLADR + GAR data on VDS
+
+```bash
+ssh root@88.210.9.155 "cd ~/sledopyt-addresses && ./deploy/scripts/update-kladr-gar-data.sh"
+```
+
 ### 3) Push current state to GitHub via auth host
 
 ```bash
@@ -53,3 +60,4 @@ Always report:
 - Whether VDS service restarted and loaded successfully
 - Whether GitHub push succeeded
 - Final commit SHA on `main`
+- Whether data refresh was run (if requested) and succeeded

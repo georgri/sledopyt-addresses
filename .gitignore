@@ -3,4 +3,4 @@ bin/
 data/
 *.log
 *.out
-sledopyt-addresses
+/sledopyt-addresses

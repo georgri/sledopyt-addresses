@@ -62,6 +62,8 @@ The utility:
 
 Then set `GAR_DATA_PATH` to this JSON file.
 
+`docker-compose` now runs GAR bootstrap automatically on deployment (default regions: `77,78`) and writes `/app/data/gar_overlay.json`.
+
 ## In-memory structures and complexity
 
 To keep search fast and predictable:
@@ -96,6 +98,7 @@ Environment variables:
 - `TELEGRAM_BOT_TOKEN` - required.
 - `KLADR_SOURCE_PATH` - required (`/app/data/BASE.7z` in Docker example).
 - `GAR_DATA_PATH` - optional path to generated GAR overlay JSON.
+- `GAR_OVERLAY_REGIONS` - optional regions for GAR bootstrap/updater (`77,78` default).
 - `USER_STATE_PATH` - optional (`data/user_state.json` default).
 
 Example:
@@ -112,6 +115,7 @@ go mod tidy
 TELEGRAM_BOT_TOKEN=... \
 KLADR_SOURCE_PATH=/absolute/path/to/BASE.7z \
 GAR_DATA_PATH=./data/gar_overlay.json \
+GAR_OVERLAY_REGIONS=77,78 \
 USER_STATE_PATH=./data/user_state.json \
 go run ./cmd/sledopyt-addresses
 ```
@@ -145,6 +149,18 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now sledopyt-addresses
 sudo systemctl status sledopyt-addresses
 ```
+
+Enable nightly data refresh (KLADR + GAR) at 05:00:
+
+```bash
+sudo cp deploy/systemd/sledopyt-data-update.service /etc/systemd/system/
+sudo cp deploy/systemd/sledopyt-data-update.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now sledopyt-data-update.timer
+sudo systemctl list-timers | rg sledopyt-data-update
+```
+
+The updater script `deploy/scripts/update-kladr-gar-data.sh` downloads yesterday's official KLADR/GAR release when available, regenerates GAR overlay for configured regions, and restarts bot container.
 
 ## Testing for large cities (Moscow / Moscow region)
 

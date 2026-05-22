@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Sledopyt data updater daily at 05:00
+
+[Timer]
+OnCalendar=*-*-* 05:00:00
+Persistent=true
+RandomizedDelaySec=10m
+Unit=sledopyt-data-update.service
+
+[Install]
+WantedBy=timers.target
+

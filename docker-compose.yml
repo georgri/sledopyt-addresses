@@ -1,9 +1,24 @@
 services:
+  gar-overlay-bootstrap:
+    build: .
+    container_name: sledopyt-gar-bootstrap
+    restart: on-failure
+    entrypoint: ["/usr/local/bin/gar77-fetch"]
+    command:
+      - -regions
+      - ${GAR_OVERLAY_REGIONS:-77,78}
+      - -out
+      - /app/data/gar_overlay.json
+    volumes:
+      - ./data:/app/data
+
   sledopyt-addresses:
     build: .
     container_name: sledopyt-addresses
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      GAR_DATA_PATH: ${GAR_DATA_PATH:-/app/data/gar_overlay.json}
     volumes:
       - ./data:/app/data
