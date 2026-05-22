@@ -1,0 +1,6 @@
+.env
+bin/
+data/
+*.log
+*.out
+sledopyt-addresses

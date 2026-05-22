@@ -1,0 +1,9 @@
+services:
+  sledopyt-addresses:
+    build: .
+    container_name: sledopyt-addresses
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
