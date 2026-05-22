@@ -8,6 +8,7 @@ import (
 
 type CitySearchResult struct {
 	CityMeta
+	Path        string
 	StreetCount int
 }
 
@@ -32,6 +33,7 @@ func (a *AddressIndex) FindCitiesByName(query string, limit int) []CitySearchRes
 				Code11: city.Code11,
 				Name:   city.Name,
 			},
+			Path:        a.CityPath(city.Code11),
 			StreetCount: a.prefixStreetCount(city.Code11),
 		})
 	}

@@ -70,6 +70,9 @@ func (a *AddressIndex) citiesWithDescendants(cityCode string) []*City {
 	out := make([]*City, 0, 64)
 	for code, city := range a.Cities {
 		if strings.HasPrefix(code, prefix) {
+			if city.Socr != "" && !isSearchableCityType(city.Socr) {
+				continue
+			}
 			out = append(out, city)
 		}
 	}

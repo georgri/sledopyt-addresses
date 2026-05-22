@@ -67,3 +67,61 @@ func (a *AddressIndex) prefixStreetCount(code string) int {
 	}
 	return a.prefixStreetCounts[CodePrefix(code)]
 }
+
+func (a *AddressIndex) CityPath(code string) string {
+	city := a.Cities[code]
+	if city == nil {
+		return code
+	}
+
+	parts := make([]string, 0, 4)
+	for _, c := range ancestorCodes(code) {
+		if parent := a.Cities[c]; parent != nil {
+			parts = append(parts, parent.Name)
+		}
+	}
+	parts = append(parts, city.Name)
+	if len(parts) == 0 {
+		return city.Name
+	}
+	// Dedupe repeating labels in malformed chains.
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		out = append(out, p)
+	}
+	if len(out) == 0 {
+		return city.Name
+	}
+	res := out[0]
+	for i := 1; i < len(out); i++ {
+		res += " -> " + out[i]
+	}
+	return res
+}
+
+func ancestorCodes(code string) []string {
+	if len(code) < 11 {
+		return nil
+	}
+	var out []string
+	// SS RRR GGG PPP (11 digits total)
+	if code[8:11] != "000" {
+		out = append(out, code[:8]+"000")
+	}
+	if code[5:8] != "000" {
+		out = append(out, code[:5]+"000000")
+	}
+	if code[2:5] != "000" {
+		out = append(out, code[:2]+"000000000")
+	}
+	// reverse so path goes root->leaf
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out
+}
