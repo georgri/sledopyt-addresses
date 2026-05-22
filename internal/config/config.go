@@ -7,9 +7,10 @@ import (
 )
 
 type Config struct {
-	TelegramToken  string
+	TelegramToken   string
 	KLADRSourcePath string
-	UserStatePath  string
+	GARDataPath     string
+	UserStatePath   string
 }
 
 func FromEnv() (Config, error) {
@@ -27,14 +28,19 @@ func FromEnv() (Config, error) {
 	if statePath == "" {
 		statePath = "data/user_state.json"
 	}
+	garPath := os.Getenv("GAR_DATA_PATH")
+	if garPath == "" {
+		garPath = os.Getenv("GAR77_DATA_PATH")
+	}
 
 	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
 		return Config{}, fmt.Errorf("create state dir: %w", err)
 	}
 
 	return Config{
-		TelegramToken:  token,
+		TelegramToken:   token,
 		KLADRSourcePath: kladrPath,
-		UserStatePath:  statePath,
+		GARDataPath:     garPath,
+		UserStatePath:   statePath,
 	}, nil
 }

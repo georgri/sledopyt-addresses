@@ -1,7 +1,7 @@
 # sledopyt-addresses
 
 Telegram bot for city orienteering game "Sledopyt".  
-It finds `street + house` variants that satisfy a user formula (for example: `1 + 3*x2 - 4*x5 + "б"`), using official KLADR data (`BASE.7z` from nalog/FIAS updates).
+It finds `street + house` variants that satisfy a user formula (for example: `1 + 3*x2 - 4*x5 + "б"`), using official KLADR data (`BASE.7z` from nalog/FIAS updates) and optional GAR overlay for selected regions.
 
 ## Features
 
@@ -12,6 +12,7 @@ It finds `street + house` variants that satisfy a user formula (for example: `1 
 - Formula parsing, normalization, validation.
 - Search by formula over chosen city + all its descendant KLADR codes.
 - Pagination for matches (`/more`, 50 results per page).
+- Optional GAR overlay: municipal/admin regions as selectable "cities" with their streets/houses.
 - Dockerized deployment.
 
 ## Formula syntax
@@ -44,6 +45,22 @@ The service accepts `KLADR_SOURCE_PATH` as:
 
 - path to `BASE.7z`, or
 - path to already extracted directory containing these DBF files.
+
+## GAR overlay for selected regions (optional)
+
+To add administrative/municipal regions with streets/houses, generate overlay JSON from official `gar_xml.zip` without downloading full archive:
+
+```bash
+go run ./cmd/gar77-fetch -regions 77,78 -out ./data/gar_overlay.json
+```
+
+The utility:
+
+- reads ZIP index over HTTP range requests,
+- downloads only required per-region files (`AS_ADDR_OBJ`, `AS_HOUSES`, `AS_ADM_HIERARCHY`, `AS_MUN_HIERARCHY`),
+- builds compact JSON with regions -> streets -> houses.
+
+Then set `GAR_DATA_PATH` to this JSON file.
 
 ## In-memory structures and complexity
 
@@ -78,6 +95,7 @@ Environment variables:
 
 - `TELEGRAM_BOT_TOKEN` - required.
 - `KLADR_SOURCE_PATH` - required (`/app/data/BASE.7z` in Docker example).
+- `GAR_DATA_PATH` - optional path to generated GAR overlay JSON.
 - `USER_STATE_PATH` - optional (`data/user_state.json` default).
 
 Example:
@@ -93,6 +111,7 @@ cp .env.example .env
 go mod tidy
 TELEGRAM_BOT_TOKEN=... \
 KLADR_SOURCE_PATH=/absolute/path/to/BASE.7z \
+GAR_DATA_PATH=./data/gar_overlay.json \
 USER_STATE_PATH=./data/user_state.json \
 go run ./cmd/sledopyt-addresses
 ```
