@@ -6,10 +6,12 @@ It finds `street + house` variants that satisfy a user formula (for example: `1 
 ## Features
 
 - Long polling Telegram bot (no webhook needed).
-- City selection from loaded KLADR dataset (`/cities`, `/city <code>`).
+- Fuzzy city search by name (`/cityname <query>`, up to 50 variants).
+- City selection from loaded KLADR dataset (`/city <code>`).
 - Per-user city persistence in local JSON (`user_id -> city_code`).
 - Formula parsing, normalization, validation.
-- Search by formula over all streets/houses of chosen city.
+- Search by formula over chosen city + all its descendant KLADR codes.
+- Pagination for matches (`/more`, 50 results per page).
 - Dockerized deployment.
 
 ## Formula syntax
@@ -131,7 +133,7 @@ Recommended check on VPS:
 
 1. Load full `BASE.7z`.
 2. In Telegram:
-   - `/cities`
+   - `/cityname москва`
    - `/city <moscow_code>`
    - send a formula with common house result.
 3. Observe memory and CPU:

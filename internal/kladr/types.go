@@ -32,3 +32,14 @@ func (a *AddressIndex) CityList() []CityMeta {
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
+
+func CodePrefix(code string) string {
+	i := len(code)
+	for i > 0 && code[i-1] == '0' {
+		i--
+	}
+	if i == 0 {
+		return code
+	}
+	return code[:i]
+}
