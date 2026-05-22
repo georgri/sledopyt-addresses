@@ -114,7 +114,7 @@ func (b *Bot) onCities(ctx context.Context, chatID int64) error {
 func (b *Bot) onCityName(ctx context.Context, msg tgMessage) error {
 	query := strings.TrimSpace(strings.TrimPrefix(msg.Text, "/cityname"))
 	if query == "" {
-	return b.sendText(ctx, msg.Chat.ID, "Формат: /cityname <подстрока названия города>")
+		return b.sendText(ctx, msg.Chat.ID, "Формат: /cityname <подстрока названия города>")
 	}
 	return b.onCityNameRaw(ctx, msg.Chat.ID, query)
 }
@@ -128,11 +128,20 @@ func (b *Bot) onCityNameRaw(ctx context.Context, chatID int64, query string) err
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Найдено городов: %d (показаны первые %d)\n", len(results), len(results)))
 	sb.WriteString("Отсортировано от более крупных к меньшим.\n")
-	sb.WriteString("Выбери код командой /city <код>\n\n")
+	sb.WriteString("Выбери код командой /city <код> или нажми кнопку ниже.\n\n")
+	commands := make([]string, 0, len(results))
 	for _, c := range results {
 		sb.WriteString(fmt.Sprintf("%s — %s\n", c.Code11, c.Name))
+		commands = append(commands, "/city "+c.Code11)
 	}
-	return b.sendText(ctx, chatID, sb.String())
+	text := sb.String()
+	if len(text) > maxTelegramMessage {
+		if err := b.sendText(ctx, chatID, text); err != nil {
+			return err
+		}
+		return b.tg.sendMessageWithKeyboard(ctx, chatID, "Кнопки выбора города:", commands)
+	}
+	return b.tg.sendMessageWithKeyboard(ctx, chatID, text, commands)
 }
 
 func (b *Bot) onCity(ctx context.Context, msg tgMessage) error {

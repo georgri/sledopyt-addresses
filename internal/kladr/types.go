@@ -10,6 +10,7 @@ type AddressIndex struct {
 type City struct {
 	Code11  string
 	Name    string
+	Socr    string
 	Streets []*Street
 }
 

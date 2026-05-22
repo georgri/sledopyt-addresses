@@ -41,18 +41,25 @@ func Load(sourcePath string) (*AddressIndex, error) {
 		return nil, err
 	}
 
-	filtered := make(map[string]*City, len(cities))
-	for code, city := range cities {
-		if len(city.Streets) == 0 {
+	// Keep all known city/locality codes from KLADR, even if they have no
+	// direct street rows. This allows selecting parent codes (e.g. Moscow root)
+	// and searching across descendants by prefix.
+	for code, name := range cityNames {
+		if _, ok := cities[code]; ok {
 			continue
 		}
-		filtered[code] = city
+		cities[code] = &City{Code11: code, Name: name.Name, Socr: name.Socr}
 	}
 
 	return &AddressIndex{
-		Cities:             filtered,
-		prefixStreetCounts: buildPrefixStreetCounts(filtered),
+		Cities:             cities,
+		prefixStreetCounts: buildPrefixStreetCounts(cities),
 	}, nil
+}
+
+type cityMeta struct {
+	Name string
+	Socr string
 }
 
 func ensureDBFDirectory(sourcePath string) (string, func(), error) {
@@ -118,13 +125,13 @@ func ensureDBFDirectory(sourcePath string) (string, func(), error) {
 	return tempDir, func() { _ = os.RemoveAll(tempDir) }, nil
 }
 
-func loadCityNames(kladrPath string) (map[string]string, error) {
+func loadCityNames(kladrPath string) (map[string]cityMeta, error) {
 	table, err := godbf.NewFromFile(kladrPath, "CP866")
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", kladrPath, err)
 	}
 
-	out := make(map[string]string)
+	out := make(map[string]cityMeta)
 	for i := 0; i < table.NumberOfRecords(); i++ {
 		code, err := table.FieldValueByName(i, "CODE")
 		if err != nil {
@@ -152,20 +159,15 @@ func loadCityNames(kladrPath string) (map[string]string, error) {
 			continue
 		}
 
-		// Keep only locality-level objects as candidate city labels.
-		if code[5:11] == "000000" {
-			continue
-		}
-
 		cityCode11 := code[:11]
 		fullName := strings.TrimSpace(name + " " + socr)
-		out[cityCode11] = fullName
+		out[cityCode11] = cityMeta{Name: fullName, Socr: socr}
 	}
 
 	return out, nil
 }
 
-func loadStreets(streetPath string, cityNames map[string]string) (map[string]*City, map[string]*Street, error) {
+func loadStreets(streetPath string, cityNames map[string]cityMeta) (map[string]*City, map[string]*Street, error) {
 	table, err := godbf.NewFromFile(streetPath, "CP866")
 	if err != nil {
 		return nil, nil, fmt.Errorf("open %s: %w", streetPath, err)
@@ -206,11 +208,16 @@ func loadStreets(streetPath string, cityNames map[string]string) (map[string]*Ci
 
 		city, ok := cities[cityCode11]
 		if !ok {
-			cityName := cityNames[cityCode11]
+			meta, hasMeta := cityNames[cityCode11]
+			cityName := meta.Name
 			if cityName == "" {
 				cityName = cityCode11
 			}
-			city = &City{Code11: cityCode11, Name: cityName}
+			socr := ""
+			if hasMeta {
+				socr = meta.Socr
+			}
+			city = &City{Code11: cityCode11, Name: cityName, Socr: socr}
 			cities[cityCode11] = city
 		}
 

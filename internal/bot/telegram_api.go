@@ -84,6 +84,32 @@ func (c *tgClient) sendMessage(ctx context.Context, chatID int64, text string) e
 		"chat_id": chatID,
 		"text":    text,
 	}
+	return c.sendMessageRaw(ctx, body)
+}
+
+func (c *tgClient) sendMessageWithKeyboard(ctx context.Context, chatID int64, text string, commands []string) error {
+	keyboard := make([][]map[string]string, 0, len(commands))
+	for i := 0; i < len(commands); i += 2 {
+		row := []map[string]string{{"text": commands[i]}}
+		if i+1 < len(commands) {
+			row = append(row, map[string]string{"text": commands[i+1]})
+		}
+		keyboard = append(keyboard, row)
+	}
+
+	body := map[string]any{
+		"chat_id": chatID,
+		"text":    text,
+		"reply_markup": map[string]any{
+			"keyboard":          keyboard,
+			"resize_keyboard":   true,
+			"one_time_keyboard": true,
+		},
+	}
+	return c.sendMessageRaw(ctx, body)
+}
+
+func (c *tgClient) sendMessageRaw(ctx context.Context, body map[string]any) error {
 	buf := bytes.NewBuffer(nil)
 	if err := json.NewEncoder(buf).Encode(body); err != nil {
 		return err

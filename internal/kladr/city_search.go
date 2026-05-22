@@ -16,11 +16,15 @@ func (a *AddressIndex) FindCitiesByName(query string, limit int) []CitySearchRes
 	if q == "" {
 		return nil
 	}
+	tokens := strings.Fields(q)
 
 	results := make([]CitySearchResult, 0, 64)
 	for _, city := range a.Cities {
+		if !isSearchableCityType(city.Socr) {
+			continue
+		}
 		n := normalizeForSearch(city.Name)
-		if !strings.Contains(n, q) {
+		if !containsAllSubstrings(n, tokens) {
 			continue
 		}
 		results = append(results, CitySearchResult{
@@ -55,4 +59,34 @@ func normalizeForSearch(s string) string {
 		}
 	}
 	return strings.Join(strings.Fields(b.String()), " ")
+}
+
+func containsAllSubstrings(haystack string, tokens []string) bool {
+	for _, t := range tokens {
+		if !strings.Contains(haystack, t) {
+			return false
+		}
+	}
+	return true
+}
+
+func isSearchableCityType(socr string) bool {
+	s := strings.ToLower(strings.TrimSpace(socr))
+	s = strings.ReplaceAll(s, ".", "")
+	s = strings.ReplaceAll(s, " ", "")
+	s = strings.ReplaceAll(s, "-", "")
+	s = strings.ReplaceAll(s, "_", "")
+
+	switch s {
+	case "г", "город",
+		"рн", "район",
+		"окр", "округ",
+		"ао",
+		"мкр", "микрорайон",
+		"тер", "территория",
+		"внтерг", "внутригородскаятерритория":
+		return true
+	default:
+		return false
+	}
 }
