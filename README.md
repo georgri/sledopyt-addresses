@@ -99,6 +99,9 @@ Environment variables:
 - `KLADR_SOURCE_PATH` - required (`/app/data/BASE.7z` in Docker example).
 - `GAR_DATA_PATH` - optional path to generated GAR overlay JSON.
 - `GAR_OVERLAY_REGIONS` - optional regions for GAR bootstrap/updater (`77,78` default).
+- `DOWNLOAD_RELAY_HOST` - optional SSH host for network relay during data updates (for servers without direct access to FIAS endpoints).
+- `DOWNLOAD_RELAY_SSH_KEY` - optional SSH private key path on server for relay connection.
+- `RELAY_SOCKS_PORT` - optional local SOCKS proxy port for relay tunnel (`1080` default).
 - `USER_STATE_PATH` - optional (`data/user_state.json` default).
 
 Example:
@@ -116,6 +119,8 @@ TELEGRAM_BOT_TOKEN=... \
 KLADR_SOURCE_PATH=/absolute/path/to/BASE.7z \
 GAR_DATA_PATH=./data/gar_overlay.json \
 GAR_OVERLAY_REGIONS=77,78 \
+DOWNLOAD_RELAY_HOST=root@185.231.154.188 \
+DOWNLOAD_RELAY_SSH_KEY=/root/.ssh/id_rsa_georgri_github \
 USER_STATE_PATH=./data/user_state.json \
 go run ./cmd/sledopyt-addresses
 ```

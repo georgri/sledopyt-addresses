@@ -37,6 +37,16 @@ rsync -az --delete --exclude '.git/' --exclude 'data/' --exclude '.env' --exclud
 ssh root@88.210.9.155 "cd ~/sledopyt-addresses && ./deploy/scripts/update-kladr-gar-data.sh"
 ```
 
+If VDS cannot access FIAS endpoints directly, set relay in `/root/sledopyt-addresses/.env`:
+
+```dotenv
+DOWNLOAD_RELAY_HOST=root@185.231.154.188
+DOWNLOAD_RELAY_SSH_KEY=/root/.ssh/id_rsa_georgri_github
+RELAY_SOCKS_PORT=1080
+```
+
+Updater will open SSH SOCKS tunnel and fetch KLADR/GAR via relay host.
+
 ## Enable nightly refresh at 05:00 on VDS
 
 ```bash
