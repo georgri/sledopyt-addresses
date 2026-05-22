@@ -108,13 +108,13 @@ func (b *Bot) onHelp(ctx context.Context, chatID int64) error {
 }
 
 func (b *Bot) onCities(ctx context.Context, chatID int64) error {
-	return b.sendText(ctx, chatID, "Городов очень много, поэтому используй поиск:\n/cityname <часть названия>\n\nПример:\n/cityname москва\n\nЯ предложу до 50 вариантов с кодами для /city <код>.")
+	return b.sendText(ctx, chatID, "Городов очень много, поэтому используй поиск по подстроке:\n/cityname <часть названия>\n\nПример:\n/cityname москва\n\nЯ предложу до 50 вариантов с кодами для /city <код>.")
 }
 
 func (b *Bot) onCityName(ctx context.Context, msg tgMessage) error {
 	query := strings.TrimSpace(strings.TrimPrefix(msg.Text, "/cityname"))
 	if query == "" {
-		return b.sendText(ctx, msg.Chat.ID, "Формат: /cityname <часть названия города>")
+	return b.sendText(ctx, msg.Chat.ID, "Формат: /cityname <подстрока названия города>")
 	}
 	return b.onCityNameRaw(ctx, msg.Chat.ID, query)
 }
@@ -127,6 +127,7 @@ func (b *Bot) onCityNameRaw(ctx context.Context, chatID int64, query string) err
 
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Найдено городов: %d (показаны первые %d)\n", len(results), len(results)))
+	sb.WriteString("Отсортировано от более крупных к меньшим.\n")
 	sb.WriteString("Выбери код командой /city <код>\n\n")
 	for _, c := range results {
 		sb.WriteString(fmt.Sprintf("%s — %s\n", c.Code11, c.Name))
@@ -200,7 +201,7 @@ func (b *Bot) sendPage(ctx context.Context, chatID, userID int64, normalized str
 	}
 	sb.WriteString(fmt.Sprintf("Страница %d/%d:\n", pageNo, totalPages))
 	for _, r := range page {
-		sb.WriteString(fmt.Sprintf("- %s, дом %s\n", r.Street, strings.ToUpper(r.House)))
+		sb.WriteString(fmt.Sprintf("- %s: %s, дом %s\n", r.City, r.Street, strings.ToUpper(r.House)))
 	}
 	if to < total {
 		sb.WriteString("\nДля следующей страницы отправь /more")

@@ -8,6 +8,7 @@ import (
 )
 
 type Match struct {
+	City   string
 	Street string
 	House  string
 }
@@ -19,6 +20,7 @@ func (a *AddressIndex) Find(cityCode string, f formula.Parsed, limit int) []Matc
 	}
 
 	results := make([]Match, 0, 128)
+	seen := make(map[string]struct{}, 1024)
 	for _, city := range cities {
 		for _, street := range city.Streets {
 			house, ok := f.Eval(street.LetterValues)
@@ -27,7 +29,13 @@ func (a *AddressIndex) Find(cityCode string, f formula.Parsed, limit int) []Matc
 			}
 			house = strings.ToLower(house)
 			if _, found := street.Houses[house]; found {
+				key := strings.ToLower(city.Name) + "|" + strings.ToLower(street.DisplayName) + "|" + house
+				if _, exists := seen[key]; exists {
+					continue
+				}
+				seen[key] = struct{}{}
 				results = append(results, Match{
+					City:   city.Name,
 					Street: street.DisplayName,
 					House:  house,
 				})
@@ -42,6 +50,9 @@ func (a *AddressIndex) Find(cityCode string, f formula.Parsed, limit int) []Matc
 	}
 
 	sort.Slice(results, func(i, j int) bool {
+		if results[i].City != results[j].City {
+			return results[i].City < results[j].City
+		}
 		if results[i].Street == results[j].Street {
 			return results[i].House < results[j].House
 		}

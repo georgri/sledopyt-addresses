@@ -8,7 +8,7 @@ import (
 
 type CitySearchResult struct {
 	CityMeta
-	Score int
+	StreetCount int
 }
 
 func (a *AddressIndex) FindCitiesByName(query string, limit int) []CitySearchResult {
@@ -20,8 +20,7 @@ func (a *AddressIndex) FindCitiesByName(query string, limit int) []CitySearchRes
 	results := make([]CitySearchResult, 0, 64)
 	for _, city := range a.Cities {
 		n := normalizeForSearch(city.Name)
-		score, ok := cityScore(q, n)
-		if !ok {
+		if !strings.Contains(n, q) {
 			continue
 		}
 		results = append(results, CitySearchResult{
@@ -29,13 +28,13 @@ func (a *AddressIndex) FindCitiesByName(query string, limit int) []CitySearchRes
 				Code11: city.Code11,
 				Name:   city.Name,
 			},
-			Score: score,
+			StreetCount: a.prefixStreetCount(city.Code11),
 		})
 	}
 
 	sort.Slice(results, func(i, j int) bool {
-		if results[i].Score != results[j].Score {
-			return results[i].Score < results[j].Score
+		if results[i].StreetCount != results[j].StreetCount {
+			return results[i].StreetCount > results[j].StreetCount
 		}
 		return results[i].Name < results[j].Name
 	})
@@ -56,31 +55,4 @@ func normalizeForSearch(s string) string {
 		}
 	}
 	return strings.Join(strings.Fields(b.String()), " ")
-}
-
-func cityScore(query, name string) (int, bool) {
-	switch {
-	case name == query:
-		return 0, true
-	case strings.HasPrefix(name, query):
-		return 1, true
-	case strings.Contains(name, query):
-		return 2, true
-	case isSubsequence(query, name):
-		return 3, true
-	default:
-		return 0, false
-	}
-}
-
-func isSubsequence(needle, haystack string) bool {
-	rn := []rune(needle)
-	rh := []rune(haystack)
-	j := 0
-	for i := 0; i < len(rh) && j < len(rn); i++ {
-		if rh[i] == rn[j] {
-			j++
-		}
-	}
-	return j == len(rn)
 }

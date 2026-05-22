@@ -3,7 +3,8 @@ package kladr
 import "sort"
 
 type AddressIndex struct {
-	Cities map[string]*City
+	Cities              map[string]*City
+	prefixStreetCounts map[string]int
 }
 
 type City struct {
@@ -42,4 +43,26 @@ func CodePrefix(code string) string {
 		return code
 	}
 	return code[:i]
+}
+
+func buildPrefixStreetCounts(cities map[string]*City) map[string]int {
+	counts := make(map[string]int, len(cities)*2)
+	for code, city := range cities {
+		direct := len(city.Streets)
+		if direct == 0 {
+			continue
+		}
+		for i := 1; i <= len(code); i++ {
+			prefix := code[:i]
+			counts[prefix] += direct
+		}
+	}
+	return counts
+}
+
+func (a *AddressIndex) prefixStreetCount(code string) int {
+	if a == nil || a.prefixStreetCounts == nil {
+		return 0
+	}
+	return a.prefixStreetCounts[CodePrefix(code)]
 }

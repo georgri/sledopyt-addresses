@@ -49,7 +49,10 @@ func Load(sourcePath string) (*AddressIndex, error) {
 		filtered[code] = city
 	}
 
-	return &AddressIndex{Cities: filtered}, nil
+	return &AddressIndex{
+		Cities:             filtered,
+		prefixStreetCounts: buildPrefixStreetCounts(filtered),
+	}, nil
 }
 
 func ensureDBFDirectory(sourcePath string) (string, func(), error) {
