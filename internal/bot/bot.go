@@ -509,8 +509,7 @@ func (b *Bot) sortResultsByDistance(ctx context.Context, userID int64, lat, lon 
 
 	ref := geo.Coordinates{Lat: lat, Lon: lon}
 	for i := range results {
-		query := fmt.Sprintf("%s, %s, %s, Россия", results[i].City, results[i].Street, results[i].House)
-		coord, ok, err := b.geocoder.GeocodeAddress(ctx, query)
+		coord, ok, err := b.geocodeMatch(ctx, results[i])
 		if err != nil {
 			return 0, "", 0, err
 		}
@@ -553,6 +552,130 @@ func (b *Bot) sortResultsByDistance(ctx context.Context, userID int64, lat, lon 
 
 	mapLink, mapPoints := buildNearestMapLink(results)
 	return len(results), mapLink, mapPoints, nil
+}
+
+func (b *Bot) geocodeMatch(ctx context.Context, m kladr.Match) (geo.Coordinates, bool, error) {
+	queries := geocodeQueriesForMatch(m)
+	for _, query := range queries {
+		coord, ok, err := b.geocoder.GeocodeAddress(ctx, query)
+		if err != nil {
+			return geo.Coordinates{}, false, err
+		}
+		if ok {
+			return coord, true, nil
+		}
+	}
+	return geo.Coordinates{}, false, nil
+}
+
+func geocodeQueriesForMatch(m kladr.Match) []string {
+	city := normalizeCityForGeocode(m.City)
+	street := normalizeStreetForGeocode(m.Street)
+	streetTypeFirst := streetWithTypeFirst(street)
+	house := strings.TrimSpace(m.House)
+
+	candidates := []string{
+		fmt.Sprintf("%s, %s, %s, Россия", city, street, house),
+		fmt.Sprintf("%s, %s, Россия", city, street),
+		fmt.Sprintf("%s, %s, %s, Россия", street, city, house),
+		fmt.Sprintf("%s, %s, Россия", street, city),
+		fmt.Sprintf("%s, %s, %s, Россия", streetTypeFirst, city, house),
+		fmt.Sprintf("%s, %s, Россия", streetTypeFirst, city),
+	}
+
+	// Fallback to original KLADR wording if normalization made it worse.
+	if city != strings.TrimSpace(m.City) || street != strings.TrimSpace(m.Street) {
+		candidates = append(candidates,
+			fmt.Sprintf("%s, %s, %s, Россия", strings.TrimSpace(m.City), strings.TrimSpace(m.Street), house),
+			fmt.Sprintf("%s, %s, Россия", strings.TrimSpace(m.City), strings.TrimSpace(m.Street)),
+		)
+	}
+
+	seen := make(map[string]struct{}, len(candidates))
+	out := make([]string, 0, len(candidates))
+	for _, c := range candidates {
+		c = strings.Join(strings.Fields(c), " ")
+		if c == "" {
+			continue
+		}
+		if _, ok := seen[c]; ok {
+			continue
+		}
+		seen[c] = struct{}{}
+		out = append(out, c)
+	}
+	return out
+}
+
+func streetWithTypeFirst(street string) string {
+	parts := strings.Fields(strings.TrimSpace(street))
+	if len(parts) < 2 {
+		return street
+	}
+	last := strings.ToLower(strings.Trim(parts[len(parts)-1], " ."))
+	switch last {
+	case "улица", "проспект", "переулок", "бульвар", "набережная", "шоссе", "площадь", "проезд", "аллея", "тупик", "микрорайон":
+		name := strings.Join(parts[:len(parts)-1], " ")
+		if name == "" {
+			return street
+		}
+		return parts[len(parts)-1] + " " + name
+	default:
+		return street
+	}
+}
+
+func normalizeCityForGeocode(city string) string {
+	city = strings.TrimSpace(city)
+	if city == "" {
+		return city
+	}
+	parts := strings.Fields(city)
+	if len(parts) < 2 {
+		return city
+	}
+	last := strings.ToLower(strings.Trim(parts[len(parts)-1], " ."))
+	switch last {
+	case "г", "город", "р-н", "район", "рн", "окр", "округ":
+		return strings.Join(parts[:len(parts)-1], " ")
+	default:
+		return city
+	}
+}
+
+func normalizeStreetForGeocode(street string) string {
+	street = strings.TrimSpace(street)
+	if street == "" {
+		return street
+	}
+	parts := strings.Fields(street)
+	if len(parts) == 0 {
+		return street
+	}
+
+	lastRaw := strings.Trim(parts[len(parts)-1], " .")
+	last := strings.ToLower(lastRaw)
+	expand := map[string]string{
+		"ул":     "улица",
+		"пр-кт":  "проспект",
+		"пркт":   "проспект",
+		"пер":    "переулок",
+		"б-р":    "бульвар",
+		"бул":    "бульвар",
+		"наб":    "набережная",
+		"ш":      "шоссе",
+		"пл":     "площадь",
+		"пр-д":   "проезд",
+		"проезд": "проезд",
+		"ал":     "аллея",
+		"туп":    "тупик",
+		"мкр":    "микрорайон",
+	}
+	if full, ok := expand[last]; ok {
+		parts[len(parts)-1] = full
+		return strings.Join(parts, " ")
+	}
+	return street
 }
 
 func buildNearestMapLink(results []kladr.Match) (string, int) {
