@@ -38,10 +38,11 @@ type tgUpdate struct {
 }
 
 type tgMessage struct {
-	MessageID int64  `json:"message_id"`
-	Chat      tgChat `json:"chat"`
-	From      tgUser `json:"from"`
-	Text      string `json:"text"`
+	MessageID int64       `json:"message_id"`
+	Chat      tgChat      `json:"chat"`
+	From      tgUser      `json:"from"`
+	Text      string      `json:"text"`
+	Location  *tgLocation `json:"location"`
 }
 
 type tgChat struct {
@@ -50,6 +51,11 @@ type tgChat struct {
 
 type tgUser struct {
 	ID int64 `json:"id"`
+}
+
+type tgLocation struct {
+	Latitude  float64 `json:"latitude"`
+	Longitude float64 `json:"longitude"`
 }
 
 func (c *tgClient) getUpdates(ctx context.Context, offset int64) ([]tgUpdate, error) {
@@ -102,6 +108,29 @@ func (c *tgClient) sendMessageWithKeyboard(ctx context.Context, chatID int64, te
 		"text":    text,
 		"reply_markup": map[string]any{
 			"keyboard":          keyboard,
+			"resize_keyboard":   true,
+			"one_time_keyboard": true,
+		},
+	}
+	return c.sendMessageRaw(ctx, body)
+}
+
+func (c *tgClient) sendLocationRequest(ctx context.Context, chatID int64, text, buttonText string) error {
+	if buttonText == "" {
+		buttonText = "Отправить текущую геопозицию"
+	}
+	body := map[string]any{
+		"chat_id": chatID,
+		"text":    text,
+		"reply_markup": map[string]any{
+			"keyboard": [][]map[string]any{
+				{
+					{
+						"text":             buttonText,
+						"request_location": true,
+					},
+				},
+			},
 			"resize_keyboard":   true,
 			"one_time_keyboard": true,
 		},

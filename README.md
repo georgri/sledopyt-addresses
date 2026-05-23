@@ -12,6 +12,8 @@ It finds `street + house` variants that satisfy a user formula (for example: `1 
 - Formula parsing, normalization, validation.
 - Search by formula over chosen city + all its descendant KLADR codes.
 - Pagination for matches (`/more`, 50 results per page).
+- Optional sorting of formula results by distance to current location (location share after prompt, or `/loc` + `/sortdistance`).
+- After distance sorting, bot sends a map link with the 50 nearest geocoded points.
 - Optional GAR overlay: municipal/admin regions as selectable "cities" with their streets/houses.
 - Dockerized deployment.
 
@@ -103,6 +105,9 @@ Environment variables:
 - `DOWNLOAD_RELAY_SSH_KEY` - optional SSH private key path on server for relay connection.
 - `RELAY_SOCKS_PORT` - optional local SOCKS proxy port for relay tunnel (`1080` default).
 - `USER_STATE_PATH` - optional (`data/user_state.json` default).
+- `GEOCODE_CACHE_PATH` - optional path for persisted OpenStreetMap geocode cache (`data/geocode_cache.json` default).
+- `NOMINATIM_USER_AGENT` - optional User-Agent for OpenStreetMap Nominatim requests.
+- `NOMINATIM_EMAIL` - optional contact email for Nominatim query parameter.
 
 Example:
 

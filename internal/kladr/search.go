@@ -8,9 +8,14 @@ import (
 )
 
 type Match struct {
-	City   string
-	Street string
-	House  string
+	City           string
+	Street         string
+	House          string
+	DistanceKm     float64
+	HasDistance    bool
+	Lat            float64
+	Lon            float64
+	HasCoordinates bool
 }
 
 func (a *AddressIndex) Find(cityCode string, f formula.Parsed, limit int) []Match {

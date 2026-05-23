@@ -13,6 +13,7 @@ import (
 	"github.com/georgri/sledopyt-addresses/internal/bot"
 	"github.com/georgri/sledopyt-addresses/internal/config"
 	"github.com/georgri/sledopyt-addresses/internal/formula"
+	"github.com/georgri/sledopyt-addresses/internal/geo"
 	"github.com/georgri/sledopyt-addresses/internal/kladr"
 	"github.com/georgri/sledopyt-addresses/internal/storage"
 )
@@ -54,7 +55,12 @@ func main() {
 		log.Fatalf("user state storage: %v", err)
 	}
 
-	telegramBot := bot.New(cfg.TelegramToken, index, stateStore)
+	geocoder, err := geo.NewNominatimClient(cfg.GeocodeCachePath, cfg.NominatimUserAgent, cfg.NominatimEmail)
+	if err != nil {
+		log.Fatalf("geocoder init: %v", err)
+	}
+
+	telegramBot := bot.New(cfg.TelegramToken, index, stateStore, geocoder)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()

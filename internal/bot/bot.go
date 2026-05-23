@@ -2,13 +2,18 @@ package bot
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
+	"math"
+	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/georgri/sledopyt-addresses/internal/formula"
+	"github.com/georgri/sledopyt-addresses/internal/geo"
 	"github.com/georgri/sledopyt-addresses/internal/kladr"
 	"github.com/georgri/sledopyt-addresses/internal/storage"
 )
@@ -20,29 +25,36 @@ const (
 )
 
 type Bot struct {
-	tg    *tgClient
-	index *kladr.AddressIndex
-	store *storage.JSONStore
+	tg       *tgClient
+	index    *kladr.AddressIndex
+	store    *storage.JSONStore
+	geocoder geo.Geocoder
 
 	sessionMu sync.RWMutex
 	sessions  map[int64]*userSession
 }
 
 type userSession struct {
-	Results []kladr.Match
-	Offset  int
+	Results        []kladr.Match
+	Offset         int
+	HasLocation    bool
+	LocationLat    float64
+	LocationLon    float64
+	DistanceSorted bool
 }
 
 func (s *userSession) reset() {
 	s.Results = nil
 	s.Offset = 0
+	s.DistanceSorted = false
 }
 
-func New(token string, index *kladr.AddressIndex, store *storage.JSONStore) *Bot {
+func New(token string, index *kladr.AddressIndex, store *storage.JSONStore, geocoder geo.Geocoder) *Bot {
 	return &Bot{
-		tg:    newTGClient(token),
-		index: index,
-		store: store,
+		tg:       newTGClient(token),
+		index:    index,
+		store:    store,
+		geocoder: geocoder,
 		sessions: make(map[int64]*userSession),
 	}
 }
@@ -65,7 +77,10 @@ func (b *Bot) Run(ctx context.Context) error {
 
 		for _, upd := range updates {
 			offset = upd.UpdateID + 1
-			if upd.Message.Chat.ID == 0 || strings.TrimSpace(upd.Message.Text) == "" {
+			if upd.Message.Chat.ID == 0 {
+				continue
+			}
+			if strings.TrimSpace(upd.Message.Text) == "" && upd.Message.Location == nil {
 				continue
 			}
 			if err := b.handleMessage(ctx, upd.Message); err != nil {
@@ -76,6 +91,10 @@ func (b *Bot) Run(ctx context.Context) error {
 }
 
 func (b *Bot) handleMessage(ctx context.Context, msg tgMessage) error {
+	if msg.Location != nil {
+		return b.onLocation(ctx, msg)
+	}
+
 	text := strings.TrimSpace(msg.Text)
 
 	switch {
@@ -95,6 +114,10 @@ func (b *Bot) handleMessage(ctx context.Context, msg tgMessage) error {
 		return b.onMore(ctx, msg)
 	case text == "/help":
 		return b.onHelp(ctx, msg.Chat.ID)
+	case strings.EqualFold(text, "/loc"):
+		return b.onLocationRequest(ctx, msg.Chat.ID, 0)
+	case strings.EqualFold(text, "/sortdistance"):
+		return b.onSortDistance(ctx, msg)
 	default:
 		if _, ok := b.store.Get(msg.From.ID); !ok {
 			return b.onCityNameRaw(ctx, msg.Chat.ID, text)
@@ -104,11 +127,11 @@ func (b *Bot) handleMessage(ctx context.Context, msg tgMessage) error {
 }
 
 func (b *Bot) onStart(ctx context.Context, chatID int64) error {
-	return b.sendText(ctx, chatID, "Привет! Я бот Sledopyt Addresses.\n\n1) Найди город: /cityname <часть названия>, например /cityname москва\n2) Добавь 1+ города в поиск: /city <код>\n3) Проверь выбранные: /citylist\n4) Отправь формулу дома, например: 1 + 3*x2 - 4*x5 + \"б\"\n\nКоманды: /cities, /cityname <текст>, /city <код>, /citylist, /cityclear, /more, /help")
+	return b.sendText(ctx, chatID, "Привет! Я бот Sledopyt Addresses.\n\n1) Найди город: /cityname <часть названия>, например /cityname москва\n2) Добавь 1+ города в поиск: /city <код>\n3) Проверь выбранные: /citylist\n4) Отправь формулу дома, например: 1 + 3*x2 - 4*x5 + \"б\"\n5) Для сортировки по расстоянию: /loc, затем /sortdistance\n\nКоманды: /cities, /cityname <текст>, /city <код>, /citylist, /cityclear, /more, /loc, /sortdistance, /help")
 }
 
 func (b *Bot) onHelp(ctx context.Context, chatID int64) error {
-	return b.sendText(ctx, chatID, "Формула поддерживает:\n- целые числа\n- переменные x1, x2, x3 ...\n- операции + и -\n- умножение коэффициента на xN (например 4*x2)\n- суффикс буквой: + \"б\"\n\nПример: 1 + 3*x2 - 4*x5 + \"б\"\n\nГорода:\n- поиск: /cityname <подстрока>\n- добавить в выбор: /city <код>\n- список выбора: /citylist\n- очистить выбор: /cityclear")
+	return b.sendText(ctx, chatID, "Формула поддерживает:\n- целые числа\n- переменные x1, x2, x3 ...\n- операции + и -\n- умножение коэффициента на xN (например 4*x2)\n- суффикс буквой: + \"б\"\n\nПример: 1 + 3*x2 - 4*x5 + \"б\"\n\nГорода:\n- поиск: /cityname <подстрока>\n- добавить в выбор: /city <код>\n- список выбора: /citylist\n- очистить выбор: /cityclear\n\nРасстояния:\n- отправить геопозицию: /loc\n- отсортировать текущую выдачу по расстоянию: /sortdistance")
 }
 
 func (b *Bot) onCities(ctx context.Context, chatID int64) error {
@@ -238,7 +261,10 @@ func (b *Bot) onFormula(ctx context.Context, msg tgMessage) error {
 	}
 
 	b.setResults(msg.From.ID, results)
-	return b.sendPage(ctx, msg.Chat.ID, msg.From.ID, parsed.Normalized, true)
+	if err := b.sendPage(ctx, msg.Chat.ID, msg.From.ID, parsed.Normalized, true); err != nil {
+		return err
+	}
+	return b.onLocationRequest(ctx, msg.Chat.ID, len(results))
 }
 
 func (b *Bot) findAcrossSelectedCities(cityCodes []string, parsed formula.Parsed) []kladr.Match {
@@ -262,6 +288,73 @@ func (b *Bot) onMore(ctx context.Context, msg tgMessage) error {
 	return b.sendPage(ctx, msg.Chat.ID, msg.From.ID, "", false)
 }
 
+func (b *Bot) onLocation(ctx context.Context, msg tgMessage) error {
+	if msg.Location == nil {
+		return nil
+	}
+	b.setLocation(msg.From.ID, msg.Location.Latitude, msg.Location.Longitude)
+
+	results, mapLink, err := b.sortResultsByDistance(ctx, msg.From.ID, msg.Location.Latitude, msg.Location.Longitude)
+	if err != nil {
+		return b.sendText(ctx, msg.Chat.ID, "Геопозиция сохранена, но отсортировать по расстоянию не удалось: "+err.Error())
+	}
+	if results == 0 {
+		return b.sendText(ctx, msg.Chat.ID, "Геопозиция сохранена. Теперь отправь формулу — результаты будут доступны для сортировки по расстоянию.")
+	}
+	if err := b.sendText(ctx, msg.Chat.ID, "Готово: результаты автоматически отсортированы по расстоянию."); err != nil {
+		return err
+	}
+	if mapLink != "" {
+		if err := b.sendText(ctx, msg.Chat.ID, "Карта 50 ближайших точек:\n"+mapLink); err != nil {
+			return err
+		}
+	}
+	return b.sendPage(ctx, msg.Chat.ID, msg.From.ID, "", true)
+}
+
+func (b *Bot) onLocationRequest(ctx context.Context, chatID int64, matches int) error {
+	if b.geocoder == nil {
+		return nil
+	}
+	rate := b.geocoder.RatePerSecond()
+	if rate <= 0 {
+		rate = 1
+	}
+	estimate := int(math.Ceil(float64(matches) / rate))
+	if estimate < 1 {
+		estimate = 1
+	}
+	text := fmt.Sprintf("Хочешь отсортировать найденные адреса по расстоянию от текущего местоположения?\nОценка времени: около %d сек. (геокодирование через OpenStreetMap)\nНажми кнопку ниже, чтобы отправить геопозицию. После получения геопозиции сортировка начнётся автоматически.", estimate)
+	return b.tg.sendLocationRequest(ctx, chatID, text, "📍 Отправить текущую геопозицию")
+}
+
+func (b *Bot) onSortDistance(ctx context.Context, msg tgMessage) error {
+	if b.geocoder == nil {
+		return b.sendText(ctx, msg.Chat.ID, "Сортировка по расстоянию сейчас недоступна.")
+	}
+	lat, lon, ok := b.getLocation(msg.From.ID)
+	if !ok {
+		return b.onLocationRequest(ctx, msg.Chat.ID, pageSize)
+	}
+
+	results, mapLink, err := b.sortResultsByDistance(ctx, msg.From.ID, lat, lon)
+	if err != nil {
+		return b.sendText(ctx, msg.Chat.ID, "Не удалось отсортировать по расстоянию: "+err.Error())
+	}
+	if results == 0 {
+		return b.sendText(ctx, msg.Chat.ID, "Нет активного поиска. Сначала отправь формулу.")
+	}
+	if err := b.sendText(ctx, msg.Chat.ID, "Готово: результаты отсортированы по расстоянию."); err != nil {
+		return err
+	}
+	if mapLink != "" {
+		if err := b.sendText(ctx, msg.Chat.ID, "Карта 50 ближайших точек:\n"+mapLink); err != nil {
+			return err
+		}
+	}
+	return b.sendPage(ctx, msg.Chat.ID, msg.From.ID, "", true)
+}
+
 func (b *Bot) sendPage(ctx context.Context, chatID, userID int64, normalized string, reset bool) error {
 	page, _, to, pageNo, totalPages, total, err := b.takePage(userID, reset)
 	if err != nil {
@@ -278,6 +371,10 @@ func (b *Bot) sendPage(ctx context.Context, chatID, userID int64, normalized str
 	}
 	sb.WriteString(fmt.Sprintf("Страница %d/%d:\n", pageNo, totalPages))
 	for _, r := range page {
+		if r.HasDistance {
+			sb.WriteString(fmt.Sprintf("- %s: %s, дом %s (%.1f км)\n", r.City, r.Street, strings.ToUpper(r.House), r.DistanceKm))
+			continue
+		}
 		sb.WriteString(fmt.Sprintf("- %s: %s, дом %s\n", r.City, r.Street, strings.ToUpper(r.House)))
 	}
 	if to < total {
@@ -330,6 +427,7 @@ func (b *Bot) setResults(userID int64, results []kladr.Match) {
 	}
 	s.Results = results
 	s.Offset = 0
+	s.DistanceSorted = false
 }
 
 func (b *Bot) clearSession(userID int64) {
@@ -365,6 +463,145 @@ func (b *Bot) takePage(userID int64, reset bool) (page []kladr.Match, from int, 
 	pageNo = from/pageSize + 1
 	totalPages = (total + pageSize - 1) / pageSize
 	return page, from, to, pageNo, totalPages, total, nil
+}
+
+func (b *Bot) setLocation(userID int64, lat, lon float64) {
+	b.sessionMu.Lock()
+	defer b.sessionMu.Unlock()
+	s := b.sessions[userID]
+	if s == nil {
+		s = &userSession{}
+		b.sessions[userID] = s
+	}
+	s.HasLocation = true
+	s.LocationLat = lat
+	s.LocationLon = lon
+}
+
+func (b *Bot) getLocation(userID int64) (float64, float64, bool) {
+	b.sessionMu.RLock()
+	defer b.sessionMu.RUnlock()
+	s := b.sessions[userID]
+	if s == nil || !s.HasLocation {
+		return 0, 0, false
+	}
+	return s.LocationLat, s.LocationLon, true
+}
+
+func (b *Bot) sortResultsByDistance(ctx context.Context, userID int64, lat, lon float64) (int, string, error) {
+	b.sessionMu.Lock()
+	session := b.sessions[userID]
+	if session == nil || len(session.Results) == 0 {
+		b.sessionMu.Unlock()
+		return 0, "", nil
+	}
+	results := append([]kladr.Match(nil), session.Results...)
+	b.sessionMu.Unlock()
+
+	ref := geo.Coordinates{Lat: lat, Lon: lon}
+	for i := range results {
+		query := fmt.Sprintf("%s, %s, %s, Россия", results[i].City, results[i].Street, results[i].House)
+		coord, ok, err := b.geocoder.GeocodeAddress(ctx, query)
+		if err != nil {
+			return 0, "", err
+		}
+		if !ok {
+			results[i].HasDistance = false
+			results[i].HasCoordinates = false
+			continue
+		}
+		results[i].HasDistance = true
+		results[i].DistanceKm = geo.HaversineKm(ref, coord)
+		results[i].HasCoordinates = true
+		results[i].Lat = coord.Lat
+		results[i].Lon = coord.Lon
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].HasDistance != results[j].HasDistance {
+			return results[i].HasDistance
+		}
+		if results[i].HasDistance && results[j].HasDistance && results[i].DistanceKm != results[j].DistanceKm {
+			return results[i].DistanceKm < results[j].DistanceKm
+		}
+		if results[i].City != results[j].City {
+			return results[i].City < results[j].City
+		}
+		if results[i].Street != results[j].Street {
+			return results[i].Street < results[j].Street
+		}
+		return results[i].House < results[j].House
+	})
+
+	b.sessionMu.Lock()
+	session = b.sessions[userID]
+	if session != nil {
+		session.Results = results
+		session.Offset = 0
+		session.DistanceSorted = true
+	}
+	b.sessionMu.Unlock()
+
+	mapLink := buildTopNearestMapLink(results)
+	return len(results), mapLink, nil
+}
+
+func buildTopNearestMapLink(results []kladr.Match) string {
+	type feature struct {
+		Type       string         `json:"type"`
+		Geometry   featureGeom    `json:"geometry"`
+		Properties map[string]any `json:"properties,omitempty"`
+	}
+	type featureCollection struct {
+		Type     string    `json:"type"`
+		Features []feature `json:"features"`
+	}
+
+	features := make([]feature, 0, pageSize)
+	for _, r := range results {
+		if len(features) >= pageSize {
+			break
+		}
+		if !r.HasCoordinates {
+			continue
+		}
+		features = append(features, feature{
+			Type: "Feature",
+			Geometry: featureGeom{
+				Type:        "Point",
+				Coordinates: []float64{roundCoord(r.Lon), roundCoord(r.Lat)},
+			},
+			Properties: map[string]any{
+				"n": fmt.Sprintf("%s, %s, %s", r.City, r.Street, strings.ToUpper(r.House)),
+			},
+		})
+	}
+	if len(features) == 0 {
+		return ""
+	}
+
+	payload, err := json.Marshal(featureCollection{
+		Type:     "FeatureCollection",
+		Features: features,
+	})
+	if err != nil {
+		return ""
+	}
+	encoded := url.QueryEscape("data:application/json," + string(payload))
+	link := "https://geojson.io/#data=" + encoded
+	if len(link) > 3000 {
+		return ""
+	}
+	return link
+}
+
+type featureGeom struct {
+	Type        string    `json:"type"`
+	Coordinates []float64 `json:"coordinates"`
+}
+
+func roundCoord(v float64) float64 {
+	return math.Round(v*1e5) / 1e5
 }
 
 func parseCodes(raw string) []string {
