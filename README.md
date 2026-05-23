@@ -13,7 +13,7 @@ It finds `street + house` variants that satisfy a user formula (for example: `1 
 - Search by formula over chosen city + all its descendant KLADR codes.
 - Pagination for matches (`/more`, 50 results per page).
 - Optional sorting of formula results by distance to current location (location share after prompt, or `/loc` + `/sortdistance`).
-- After distance sorting, bot sends a map link with the 50 nearest geocoded points.
+- After distance sorting, bot sends a map link with as many nearest geocoded points as safely fit in URL length.
 - Optional GAR overlay: municipal/admin regions as selectable "cities" with their streets/houses.
 - Dockerized deployment.
 

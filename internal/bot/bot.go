@@ -22,6 +22,7 @@ const (
 	maxCitySuggestions = 50
 	pageSize           = 50
 	maxTelegramMessage = 3800
+	maxMapURLLength    = 3500
 )
 
 type Bot struct {
@@ -294,7 +295,7 @@ func (b *Bot) onLocation(ctx context.Context, msg tgMessage) error {
 	}
 	b.setLocation(msg.From.ID, msg.Location.Latitude, msg.Location.Longitude)
 
-	results, mapLink, err := b.sortResultsByDistance(ctx, msg.From.ID, msg.Location.Latitude, msg.Location.Longitude)
+	results, mapLink, mapPoints, err := b.sortResultsByDistance(ctx, msg.From.ID, msg.Location.Latitude, msg.Location.Longitude)
 	if err != nil {
 		return b.sendText(ctx, msg.Chat.ID, "Геопозиция сохранена, но отсортировать по расстоянию не удалось: "+err.Error())
 	}
@@ -305,7 +306,7 @@ func (b *Bot) onLocation(ctx context.Context, msg tgMessage) error {
 		return err
 	}
 	if mapLink != "" {
-		if err := b.sendText(ctx, msg.Chat.ID, "Карта 50 ближайших точек:\n"+mapLink); err != nil {
+		if err := b.sendText(ctx, msg.Chat.ID, fmt.Sprintf("Карта ближайших точек (%d):\n%s", mapPoints, mapLink)); err != nil {
 			return err
 		}
 	}
@@ -337,7 +338,7 @@ func (b *Bot) onSortDistance(ctx context.Context, msg tgMessage) error {
 		return b.onLocationRequest(ctx, msg.Chat.ID, pageSize)
 	}
 
-	results, mapLink, err := b.sortResultsByDistance(ctx, msg.From.ID, lat, lon)
+	results, mapLink, mapPoints, err := b.sortResultsByDistance(ctx, msg.From.ID, lat, lon)
 	if err != nil {
 		return b.sendText(ctx, msg.Chat.ID, "Не удалось отсортировать по расстоянию: "+err.Error())
 	}
@@ -348,7 +349,7 @@ func (b *Bot) onSortDistance(ctx context.Context, msg tgMessage) error {
 		return err
 	}
 	if mapLink != "" {
-		if err := b.sendText(ctx, msg.Chat.ID, "Карта 50 ближайших точек:\n"+mapLink); err != nil {
+		if err := b.sendText(ctx, msg.Chat.ID, fmt.Sprintf("Карта ближайших точек (%d):\n%s", mapPoints, mapLink)); err != nil {
 			return err
 		}
 	}
@@ -488,12 +489,12 @@ func (b *Bot) getLocation(userID int64) (float64, float64, bool) {
 	return s.LocationLat, s.LocationLon, true
 }
 
-func (b *Bot) sortResultsByDistance(ctx context.Context, userID int64, lat, lon float64) (int, string, error) {
+func (b *Bot) sortResultsByDistance(ctx context.Context, userID int64, lat, lon float64) (int, string, int, error) {
 	b.sessionMu.Lock()
 	session := b.sessions[userID]
 	if session == nil || len(session.Results) == 0 {
 		b.sessionMu.Unlock()
-		return 0, "", nil
+		return 0, "", 0, nil
 	}
 	results := append([]kladr.Match(nil), session.Results...)
 	b.sessionMu.Unlock()
@@ -503,7 +504,7 @@ func (b *Bot) sortResultsByDistance(ctx context.Context, userID int64, lat, lon 
 		query := fmt.Sprintf("%s, %s, %s, Россия", results[i].City, results[i].Street, results[i].House)
 		coord, ok, err := b.geocoder.GeocodeAddress(ctx, query)
 		if err != nil {
-			return 0, "", err
+			return 0, "", 0, err
 		}
 		if !ok {
 			results[i].HasDistance = false
@@ -542,26 +543,14 @@ func (b *Bot) sortResultsByDistance(ctx context.Context, userID int64, lat, lon 
 	}
 	b.sessionMu.Unlock()
 
-	mapLink := buildTopNearestMapLink(results)
-	return len(results), mapLink, nil
+	mapLink, mapPoints := buildNearestMapLink(results)
+	return len(results), mapLink, mapPoints, nil
 }
 
-func buildTopNearestMapLink(results []kladr.Match) string {
-	type feature struct {
-		Type       string         `json:"type"`
-		Geometry   featureGeom    `json:"geometry"`
-		Properties map[string]any `json:"properties,omitempty"`
-	}
-	type featureCollection struct {
-		Type     string    `json:"type"`
-		Features []feature `json:"features"`
-	}
-
+func buildNearestMapLink(results []kladr.Match) (string, int) {
 	features := make([]feature, 0, pageSize)
+	bestFeatures := make([]feature, 0, pageSize)
 	for _, r := range results {
-		if len(features) >= pageSize {
-			break
-		}
 		if !r.HasCoordinates {
 			continue
 		}
@@ -575,11 +564,22 @@ func buildTopNearestMapLink(results []kladr.Match) string {
 				"n": fmt.Sprintf("%s, %s, %s", r.City, r.Street, strings.ToUpper(r.House)),
 			},
 		})
+		link := buildGeoJSONLink(features)
+		if link == "" {
+			break
+		}
+		if len(link) > maxMapURLLength {
+			break
+		}
+		bestFeatures = append(bestFeatures[:0], features...)
 	}
-	if len(features) == 0 {
-		return ""
+	if len(bestFeatures) == 0 {
+		return "", 0
 	}
+	return buildGeoJSONLink(bestFeatures), len(bestFeatures)
+}
 
+func buildGeoJSONLink(features []feature) string {
 	payload, err := json.Marshal(featureCollection{
 		Type:     "FeatureCollection",
 		Features: features,
@@ -588,16 +588,23 @@ func buildTopNearestMapLink(results []kladr.Match) string {
 		return ""
 	}
 	encoded := url.QueryEscape("data:application/json," + string(payload))
-	link := "https://geojson.io/#data=" + encoded
-	if len(link) > 3000 {
-		return ""
-	}
-	return link
+	return "https://geojson.io/#data=" + encoded
 }
 
 type featureGeom struct {
 	Type        string    `json:"type"`
 	Coordinates []float64 `json:"coordinates"`
+}
+
+type feature struct {
+	Type       string         `json:"type"`
+	Geometry   featureGeom    `json:"geometry"`
+	Properties map[string]any `json:"properties,omitempty"`
+}
+
+type featureCollection struct {
+	Type     string    `json:"type"`
+	Features []feature `json:"features"`
 }
 
 func roundCoord(v float64) float64 {
