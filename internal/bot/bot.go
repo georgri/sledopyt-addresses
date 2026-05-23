@@ -309,6 +309,10 @@ func (b *Bot) onLocation(ctx context.Context, msg tgMessage) error {
 		if err := b.sendText(ctx, msg.Chat.ID, fmt.Sprintf("Карта ближайших точек (%d):\n%s", mapPoints, mapLink)); err != nil {
 			return err
 		}
+	} else {
+		if err := b.sendText(ctx, msg.Chat.ID, "Карту построить не удалось: не найдено координат для результатов."); err != nil {
+			return err
+		}
 	}
 	return b.sendPage(ctx, msg.Chat.ID, msg.From.ID, "", true)
 }
@@ -350,6 +354,10 @@ func (b *Bot) onSortDistance(ctx context.Context, msg tgMessage) error {
 	}
 	if mapLink != "" {
 		if err := b.sendText(ctx, msg.Chat.ID, fmt.Sprintf("Карта ближайших точек (%d):\n%s", mapPoints, mapLink)); err != nil {
+			return err
+		}
+	} else {
+		if err := b.sendText(ctx, msg.Chat.ID, "Карту построить не удалось: не найдено координат для результатов."); err != nil {
 			return err
 		}
 	}
@@ -548,13 +556,17 @@ func (b *Bot) sortResultsByDistance(ctx context.Context, userID int64, lat, lon 
 }
 
 func buildNearestMapLink(results []kladr.Match) (string, int) {
-	features := make([]feature, 0, pageSize)
-	bestFeatures := make([]feature, 0, pageSize)
+	fullFeatures := make([]feature, 0, pageSize)
+	compFeatures := make([]feature, 0, pageSize)
+	bestFull := make([]feature, 0, pageSize)
+	bestCompact := make([]feature, 0, pageSize)
+	idx := 0
 	for _, r := range results {
 		if !r.HasCoordinates {
 			continue
 		}
-		features = append(features, feature{
+		idx++
+		fullFeatures = append(fullFeatures, feature{
 			Type: "Feature",
 			Geometry: featureGeom{
 				Type:        "Point",
@@ -564,19 +576,33 @@ func buildNearestMapLink(results []kladr.Match) (string, int) {
 				"n": fmt.Sprintf("%s, %s, %s", r.City, r.Street, strings.ToUpper(r.House)),
 			},
 		})
-		link := buildGeoJSONLink(features)
-		if link == "" {
-			break
+		compFeatures = append(compFeatures, feature{
+			Type: "Feature",
+			Geometry: featureGeom{
+				Type:        "Point",
+				Coordinates: []float64{roundCoord(r.Lon), roundCoord(r.Lat)},
+			},
+			Properties: map[string]any{
+				"i": idx,
+			},
+		})
+
+		fullLink := buildGeoJSONLink(fullFeatures)
+		if fullLink != "" && len(fullLink) <= maxMapURLLength {
+			bestFull = append(bestFull[:0], fullFeatures...)
 		}
-		if len(link) > maxMapURLLength {
-			break
+		compactLink := buildGeoJSONLink(compFeatures)
+		if compactLink != "" && len(compactLink) <= maxMapURLLength {
+			bestCompact = append(bestCompact[:0], compFeatures...)
 		}
-		bestFeatures = append(bestFeatures[:0], features...)
 	}
-	if len(bestFeatures) == 0 {
-		return "", 0
+	if len(bestFull) > 0 {
+		return buildGeoJSONLink(bestFull), len(bestFull)
 	}
-	return buildGeoJSONLink(bestFeatures), len(bestFeatures)
+	if len(bestCompact) > 0 {
+		return buildGeoJSONLink(bestCompact), len(bestCompact)
+	}
+	return "", 0
 }
 
 func buildGeoJSONLink(features []feature) string {
