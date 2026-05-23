@@ -3,7 +3,7 @@ services:
     build: .
     container_name: sledopyt-gar-bootstrap
     restart: on-failure
-    entrypoint: ["/usr/local/bin/gar77-fetch"]
+    entrypoint: ["/usr/local/bin/gar-fetch"]
     command:
       - -regions
       - ${GAR_OVERLAY_REGIONS:-77,78}

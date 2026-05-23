@@ -23,7 +23,7 @@ Hosts:
 Run from repository root:
 
 ```bash
-go run ./cmd/gar77-fetch -regions 77,78 -out ./data/gar_overlay.json
+go run ./cmd/gar-fetch -regions 77,78 -out ./data/gar_overlay.json
 ```
 
 `BASE.7z` is downloaded from official FIAS metadata endpoint by deploy updater script, so locally you may keep the existing file or download manually.

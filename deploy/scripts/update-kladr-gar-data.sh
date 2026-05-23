@@ -105,7 +105,7 @@ if ! /usr/bin/docker image inspect "$APP_IMAGE" >/dev/null 2>&1; then
 fi
 /usr/bin/docker run --rm \
   --network host \
-  --entrypoint /usr/local/bin/gar77-fetch \
+  --entrypoint /usr/local/bin/gar-fetch \
   -e GOMEMLIMIT=1GiB \
   -e GOGC=50 \
   -e HTTPS_PROXY="${HTTPS_PROXY:-}" \

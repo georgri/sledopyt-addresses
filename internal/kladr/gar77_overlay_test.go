@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestMergeGAR77Overlay(t *testing.T) {
+func TestMergeGAROverlay(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()

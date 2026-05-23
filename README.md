@@ -51,7 +51,7 @@ The service accepts `KLADR_SOURCE_PATH` as:
 To add administrative/municipal regions with streets/houses, generate overlay JSON from official `gar_xml.zip` without downloading full archive:
 
 ```bash
-go run ./cmd/gar77-fetch -regions 77,78 -out ./data/gar_overlay.json
+go run ./cmd/gar-fetch -regions 77,78 -out ./data/gar_overlay.json
 ```
 
 The utility:

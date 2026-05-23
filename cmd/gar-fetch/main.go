@@ -76,6 +76,7 @@ type regionMeta struct {
 	ID   int64
 	Name string
 	Socr string
+	Level int
 }
 
 type overlayData struct {
@@ -518,7 +519,7 @@ func splitRegionCodes(v string) []string {
 
 func buildOverlay(z *remoteZip, regionCode, addrEntry, housesEntry, admHierarchyEntry, munHierarchyEntry string) (overlayData, error) {
 	log.Printf("Parsing %s", addrEntry)
-	streets, regions, err := parseAddrObjects(z, addrEntry)
+	streets, regions, subjectName, err := parseAddrObjects(z, addrEntry)
 	if err != nil {
 		return overlayData{}, err
 	}
@@ -531,17 +532,30 @@ func buildOverlay(z *remoteZip, regionCode, addrEntry, housesEntry, admHierarchy
 	}
 	log.Printf("Active houses: %d", len(activeHouseIDs))
 
-	log.Printf("Parsing %s (streets -> regions)", munHierarchyEntry)
-	streetToRegion, _, err := parseHierarchy(z, munHierarchyEntry, streets, regions, map[int64]struct{}{})
+	log.Printf("Parsing %s (streets -> regions, houses -> streets)", admHierarchyEntry)
+	streetToRegions, houseToStreet, regionAncestors, err := parseHierarchy(z, admHierarchyEntry, streets, regions, activeHouseIDs)
 	if err != nil {
 		return overlayData{}, err
 	}
-	log.Printf("Parsing %s (houses -> streets)", admHierarchyEntry)
-	_, houseToStreet, err := parseHierarchy(z, admHierarchyEntry, streets, map[int64]regionMeta{}, activeHouseIDs)
+
+	log.Printf("Parsing %s (fallback streets -> regions)", munHierarchyEntry)
+	munStreetToRegions, _, munRegionAncestors, err := parseHierarchy(z, munHierarchyEntry, streets, regions, map[int64]struct{}{})
 	if err != nil {
 		return overlayData{}, err
 	}
-	log.Printf("Mapped streets->regions: %d, houses->streets: %d", len(streetToRegion), len(houseToStreet))
+	for sid, regionSet := range munStreetToRegions {
+		dst := streetToRegions[sid]
+		if dst == nil {
+			dst = make(map[int64]struct{}, len(regionSet))
+			streetToRegions[sid] = dst
+		}
+		for rid := range regionSet {
+			dst[rid] = struct{}{}
+		}
+	}
+	mergeRegionAncestors(regionAncestors, munRegionAncestors)
+	expandStreetRegionAncestors(streetToRegions, regionAncestors)
+	log.Printf("Mapped streets->regions: streets=%d links=%d, houses->streets: %d", len(streetToRegions), countStreetRegionLinks(streetToRegions), len(houseToStreet))
 
 	log.Printf("Parsing %s (pass 2)", housesEntry)
 	streetHouses, err := collectStreetHouses(z, housesEntry, houseToStreet)
@@ -551,7 +565,7 @@ func buildOverlay(z *remoteZip, regionCode, addrEntry, housesEntry, admHierarchy
 	log.Printf("Streets with houses: %d", len(streetHouses))
 
 	regionStreets := make(map[int64]map[int64]streetMeta)
-	for sid, rid := range streetToRegion {
+	for sid, regionSet := range streetToRegions {
 		sm, okStreet := streets[sid]
 		if !okStreet {
 			continue
@@ -559,15 +573,17 @@ func buildOverlay(z *remoteZip, regionCode, addrEntry, housesEntry, admHierarchy
 		if _, ok := streetHouses[sid]; !ok {
 			continue
 		}
-		if _, ok := regions[rid]; !ok {
-			continue
+		for rid := range regionSet {
+			if _, ok := regions[rid]; !ok {
+				continue
+			}
+			m := regionStreets[rid]
+			if m == nil {
+				m = make(map[int64]streetMeta)
+				regionStreets[rid] = m
+			}
+			m[sid] = sm
 		}
-		m := regionStreets[rid]
-		if m == nil {
-			m = make(map[int64]streetMeta)
-			regionStreets[rid] = m
-		}
-		m[sid] = sm
 	}
 
 	regionIDs := make([]int64, 0, len(regionStreets))
@@ -597,7 +613,7 @@ func buildOverlay(z *remoteZip, regionCode, addrEntry, housesEntry, admHierarchy
 
 		or := overlayRegion{
 			Code:    fmt.Sprintf("gar%s-%d", regionCode, rid),
-			Name:    rm.Name,
+			Name:    composeRegionName(subjectName, rm.Name),
 			Socr:    rm.Socr,
 			Streets: make([]overlayStreet, 0, len(streetIDs)),
 		}
@@ -620,15 +636,16 @@ func buildOverlay(z *remoteZip, regionCode, addrEntry, housesEntry, admHierarchy
 	return out, nil
 }
 
-func parseAddrObjects(z *remoteZip, entryName string) (map[int64]streetMeta, map[int64]regionMeta, error) {
+func parseAddrObjects(z *remoteZip, entryName string) (map[int64]streetMeta, map[int64]regionMeta, string, error) {
 	rc, err := z.openEntry(entryName)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 	defer rc.Close()
 
 	streets := make(map[int64]streetMeta, 8192)
 	regions := make(map[int64]regionMeta, 256)
+	subjectName := ""
 
 	dec := xml.NewDecoder(rc)
 	for {
@@ -637,7 +654,7 @@ func parseAddrObjects(z *remoteZip, entryName string) (map[int64]streetMeta, map
 			if errors.Is(err, io.EOF) {
 				break
 			}
-			return nil, nil, err
+			return nil, nil, "", err
 		}
 		se, ok := tok.(xml.StartElement)
 		if !ok || se.Name.Local != "OBJECT" {
@@ -651,9 +668,8 @@ func parseAddrObjects(z *remoteZip, entryName string) (map[int64]streetMeta, map
 			IsActual: attr(se.Attr, "ISACTUAL"),
 			IsActive: attr(se.Attr, "ISACTIVE"),
 		}
-		if obj.IsActive != "1" || obj.IsActual != "1" {
-			continue
-		}
+		isActual := obj.IsActual == "1"
+		isActive := obj.IsActive == "1"
 		id, ok := parseInt64(obj.ObjectID)
 		if !ok {
 			continue
@@ -666,24 +682,25 @@ func parseAddrObjects(z *remoteZip, entryName string) (map[int64]streetMeta, map
 		}
 
 		if level == 8 {
+			if !isActive || !isActual {
+				continue
+			}
 			streets[id] = streetMeta{ID: id, Name: name, Type: typ}
+			continue
 		}
-		if isMoscowAdministrativeRegion(level, name, typ) {
-			full := strings.TrimSpace(name)
-			if typ != "" && !containsFold(full, typ) {
-				full = strings.TrimSpace(full + " " + typ)
-			}
-			if !containsFold(full, "москва") {
-				full = "Москва, " + full
-			}
+		if level == 1 && subjectName == "" {
+			subjectName = mergeNameAndType(name, typ)
+		}
+		if level >= 2 && level != 8 {
+			full := mergeNameAndType(name, typ)
 			socr := typ
 			if socr == "" {
-				socr = "вн.тер.г."
+				socr = "территория"
 			}
-			regions[id] = regionMeta{ID: id, Name: full, Socr: socr}
+			regions[id] = regionMeta{ID: id, Name: full, Socr: socr, Level: level}
 		}
 	}
-	return streets, regions, nil
+	return streets, regions, subjectName, nil
 }
 
 func collectActiveHouseIDs(z *remoteZip, entryName string) (map[int64]struct{}, error) {
@@ -725,10 +742,10 @@ func parseHierarchy(
 	streets map[int64]streetMeta,
 	regions map[int64]regionMeta,
 	activeHouseIDs map[int64]struct{},
-) (map[int64]int64, map[int64]int64, error) {
+) (map[int64]map[int64]struct{}, map[int64]int64, map[int64]map[int64]struct{}, error) {
 	rc, err := z.openEntry(entryName)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	defer rc.Close()
 
@@ -741,8 +758,9 @@ func parseHierarchy(
 		regionIDs[id] = struct{}{}
 	}
 
-	streetToRegion := make(map[int64]int64, len(streets))
+	streetToRegions := make(map[int64]map[int64]struct{}, len(streets))
 	houseToStreet := make(map[int64]int64, len(activeHouseIDs))
+	regionAncestors := make(map[int64]map[int64]struct{}, len(regions))
 
 	dec := xml.NewDecoder(rc)
 	for {
@@ -751,7 +769,7 @@ func parseHierarchy(
 			if errors.Is(err, io.EOF) {
 				break
 			}
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		se, ok := tok.(xml.StartElement)
 		if !ok || se.Name.Local != "ITEM" {
@@ -775,8 +793,33 @@ func parseHierarchy(
 		}
 
 		if _, ok := streetIDs[objID]; ok {
-			if rid := lastIDInSet(pathIDs, regionIDs); rid != 0 {
-				streetToRegion[objID] = rid
+			regionPath := collectRegionsInPath(pathIDs, regionIDs)
+			if len(regionPath) > 0 {
+				dst := streetToRegions[objID]
+				if dst == nil {
+					dst = make(map[int64]struct{}, len(regionPath))
+					streetToRegions[objID] = dst
+				}
+				for _, rid := range regionPath {
+					dst[rid] = struct{}{}
+				}
+			}
+			continue
+		}
+		if _, ok := regionIDs[objID]; ok {
+			regionPath := collectRegionsInPath(pathIDs, regionIDs)
+			if len(regionPath) > 0 {
+				dst := regionAncestors[objID]
+				if dst == nil {
+					dst = make(map[int64]struct{}, len(regionPath))
+					regionAncestors[objID] = dst
+				}
+				for _, rid := range regionPath {
+					if rid == objID {
+						continue
+					}
+					dst[rid] = struct{}{}
+				}
 			}
 			continue
 		}
@@ -786,7 +829,7 @@ func parseHierarchy(
 			}
 		}
 	}
-	return streetToRegion, houseToStreet, nil
+	return streetToRegions, houseToStreet, regionAncestors, nil
 }
 
 func collectStreetHouses(z *remoteZip, entryName string, houseToStreet map[int64]int64) (map[int64]map[string]struct{}, error) {
@@ -920,37 +963,89 @@ func parseInt64(s string) (int64, bool) {
 	return v, true
 }
 
-func isMoscowAdministrativeRegion(level int, name, typ string) bool {
-	if level != 3 {
-		return false
+func composeRegionName(subjectName, regionName string) string {
+	subjectName = strings.TrimSpace(subjectName)
+	regionName = strings.TrimSpace(regionName)
+	if regionName == "" {
+		return subjectName
 	}
-	n := strings.ToLower(strings.TrimSpace(name))
-	t := normalizeType(typ)
-	if strings.HasPrefix(n, "муниципальный округ ") {
-		return true
+	if subjectName == "" {
+		return regionName
 	}
-	switch t {
-	case "рн", "район",
-		"окр", "округ",
-		"ао", "административныйокруг",
-		"внтерг", "внутригородскаятерритория":
-		return true
-	default:
-		return false
+	if containsFold(regionName, subjectName) {
+		return regionName
 	}
+	return subjectName + ", " + regionName
 }
 
-func normalizeType(s string) string {
-	s = strings.ToLower(strings.TrimSpace(s))
-	repl := []string{".", " ", "-", "_"}
-	for _, r := range repl {
-		s = strings.ReplaceAll(s, r, "")
+func mergeNameAndType(name, typ string) string {
+	full := strings.TrimSpace(name)
+	typ = strings.TrimSpace(typ)
+	if typ != "" && !containsFold(full, typ) {
+		full = strings.TrimSpace(full + " " + typ)
 	}
-	return s
+	return full
 }
 
 func containsFold(s, sub string) bool {
 	return strings.Contains(strings.ToLower(s), strings.ToLower(sub))
+}
+
+func collectRegionsInPath(pathIDs []int64, regionIDs map[int64]struct{}) []int64 {
+	out := make([]int64, 0, len(pathIDs))
+	seen := make(map[int64]struct{}, len(pathIDs))
+	for _, id := range pathIDs {
+		if _, ok := regionIDs[id]; !ok {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
+}
+
+func countStreetRegionLinks(streetToRegions map[int64]map[int64]struct{}) int {
+	total := 0
+	for _, regionSet := range streetToRegions {
+		total += len(regionSet)
+	}
+	return total
+}
+
+func mergeRegionAncestors(dst, src map[int64]map[int64]struct{}) {
+	for rid, srcSet := range src {
+		dstSet := dst[rid]
+		if dstSet == nil {
+			dstSet = make(map[int64]struct{}, len(srcSet))
+			dst[rid] = dstSet
+		}
+		for ancestor := range srcSet {
+			dstSet[ancestor] = struct{}{}
+		}
+	}
+}
+
+func expandStreetRegionAncestors(streetToRegions map[int64]map[int64]struct{}, regionAncestors map[int64]map[int64]struct{}) {
+	for _, regionSet := range streetToRegions {
+		queue := make([]int64, 0, len(regionSet))
+		for rid := range regionSet {
+			queue = append(queue, rid)
+		}
+		for i := 0; i < len(queue); i++ {
+			rid := queue[i]
+			ancestors := regionAncestors[rid]
+			for ancestor := range ancestors {
+				if _, ok := regionSet[ancestor]; ok {
+					continue
+				}
+				regionSet[ancestor] = struct{}{}
+				queue = append(queue, ancestor)
+			}
+		}
+	}
 }
 
 func attr(attrs []xml.Attr, key string) string {

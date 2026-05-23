@@ -25,6 +25,10 @@ func streetLetterValues(street string) []int {
 	for _, r := range normalized {
 		if rank, ok := letterRank[r]; ok {
 			out = append(out, rank)
+			continue
+		}
+		if r >= '0' && r <= '9' {
+			out = append(out, int(r-'0'))
 		}
 	}
 	return out
@@ -35,7 +39,7 @@ func normalizeStreet(street string) string {
 	var b strings.Builder
 	b.Grow(len(lowered))
 	for _, r := range lowered {
-		if unicode.IsLetter(r) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
 			b.WriteRune(r)
 		}
 	}

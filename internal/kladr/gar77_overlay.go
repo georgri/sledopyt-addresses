@@ -7,18 +7,18 @@ import (
 	"strings"
 )
 
-type gar77Overlay struct {
-	Regions []gar77Region `json:"regions"`
+type garOverlay struct {
+	Regions []garRegion `json:"regions"`
 }
 
-type gar77Region struct {
+type garRegion struct {
 	Code    string        `json:"code"`
 	Name    string        `json:"name"`
 	Socr    string        `json:"socr"`
-	Streets []gar77Street `json:"streets"`
+	Streets []garStreet `json:"streets"`
 }
 
-type gar77Street struct {
+type garStreet struct {
 	Name   string   `json:"name"`
 	Type   string   `json:"type"`
 	Houses []string `json:"houses"`
@@ -32,7 +32,7 @@ func (a *AddressIndex) MergeGAROverlay(path string) error {
 	if err != nil {
 		return fmt.Errorf("read GAR overlay %s: %w", path, err)
 	}
-	var overlay gar77Overlay
+	var overlay garOverlay
 	if err := json.Unmarshal(data, &overlay); err != nil {
 		return fmt.Errorf("parse GAR overlay %s: %w", path, err)
 	}
